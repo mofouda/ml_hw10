@@ -1,0 +1,128 @@
+---
+title: "ml_hw10"
+author: "Mohammad"
+date: "2023-04-04"
+output: github_document
+---
+```{r setup, include=FALSE}
+library(tidyverse)
+library(randomForest)
+library(caret)
+library(rpart.plot)
+library(rpart)
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	warning = FALSE,
+	fig.width = 8, 
+  fig.height = 6,
+  out.width = "90%")
+```
+
+
+### Data preparation
+
+First we load the `exposome` data file then merge `exposome` and `phenotype` data sets, then remove the `ID` variable. Next, we partition the data into training and testing data (70/30 split)
+
+```{r dataprep}
+#Load data using path of where file is stored
+load("/Users/mofouda/Desktop/Spring 23/Machine learning/Assignmets/hw10/ml_hw10/data/exposome.RData")
+
+#Merge all data frames into a single data frame
+studydata <- 
+    merge(exposome, phenotype, by="ID") %>% 
+    merge(covariates, by="ID") %>% 
+    select(-ID)
+
+#Partition data for use in demonstration
+set.seed(123)
+
+train.index <- 
+    studydata$e3_bw %>% 
+    createDataPartition(p = 0.7, list = FALSE)
+
+train_df <- 
+    studydata[train.index, ]
+
+test_df <- 
+    studydata[-train.index, ]
+```
+
+### Step 1: Data Exploration of Training Data
+
+In this step we perform some data exploration by providing some descriptive measures (for continuous measures: means and ranges, for categorical/binary: frequency counts), examining correlations between features, examining missingness.
+
+The `studydata` dataframe has 1301 observations and 241 features.
+
+```{r dataexplore}
+str(studydata)
+
+#Descriptive statistics
+summaries <-
+    studydata %>% 
+    select(h_abs_ratio_preg_Log, hs_no2_dy_hs_h_Log, h_accesspoints300_preg_Log, hs_walkability_mean_h_None,
+         h_Benzene_Log, h_NO2_Log, e3_alcpreg_yn_None, h_dairy_preg_Ter, h_meat_preg_Ter, h_pamod_t3_None,
+         hs_cu_c_Log2, hs_pfoa_m_Log2, e3_asmokcigd_p_None, h_trafnear_preg_pow1over3, hs_wgtgain_None,
+         e3_sex_None, h_edumc_None, hs_child_age_None,hs_asthma, hs_zbmi_who, hs_Gen_Tot, e3_bw) %>% 
+    summary()
+
+summaries
+
+#Examine Missingness
+Amelia::missmap(studydata)
+
+
+#Examine correlations between features
+cor_studydata <-
+    studydata %>% 
+    select(where(is.numeric)) %>% 
+    cor(use = "complete.obs") %>% 
+    findCorrelation(cutoff=0.4)
+```
+
+### Step 2: Research Question
+
+A hypothesis-generating question we could explore using our data is:
+
+Is there a correlation between maternal pre- and postnatal environmental exposures and child neurological behavior aged 6-11 years?
+
+### Step 3: Implement pipeline to address research question
+
+Using a random forest algorithm to train the model for feature selection. We can get the most important variable in predicting the neurological behavior in children aged 6-11 years. We can then use this data to generate a hypothesis regarding these environmental exposures and neuro hehavior outcomes in children. 
+
+This code chunk uses different combinations of the features in the `studydata` dataset to train the model. We run 200 trees in this model. Variable number of trees could be used to train the model to get the best model. However, computational capacity is a limitation so we restrict to 200 trees only. We use Roomt Mean Square Error to evaluate the model since this is a regression problem. 
+
+
+```{r algorithm}
+# Try mtry of all, half of all, sqrt of all, 
+mtry <- 
+    c(ncol(train_df)-1, sqrt(ncol(train_df)-1), 0.5*ncol(train_df)-1)
+
+mtrygrid <- 
+    expand.grid(.mtry = round(mtry))
+
+control <- 
+    trainControl(method = "cv", number = 10)
+
+set.seed(123)
+    rf <- 
+        train(hs_Gen_Tot ~., data = train_df, method = "rf", preProc=c("center", "scale"), 
+              trControl = control, metric = "RMSE", tuneGrid = mtrygrid, importance = TRUE, ntree = 200)
+
+rf$results
+varImp(rf)
+rf$finalModel
+varImpPlot(rf$finalModel)
+```
+
+
+### Model Evaluation in test
+
+We then use the model to evaluate the performance in the test dataset. 
+
+```{r evaluation}
+set.seed(123)
+
+predictions <- predict(rf, test_df)
+RMSE(predictions, test_df$hs_Gen_Tot)
+```
